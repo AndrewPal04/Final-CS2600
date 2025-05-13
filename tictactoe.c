@@ -3,7 +3,7 @@
 #include <string.h>
 #include <windows.h>
 
-#define BROKER_IP "34.53.123.240"  // change here
+#define BROKER_IP "35.203.183.220"  // change here and in mqtt_send.bat
 
 char board[10];
 
@@ -63,16 +63,14 @@ void runMode1() {
     char result = ' ';
     char boardResponse[64];
     char boardCopy[10];
+    const char* broker_ip = "35.203.183.220";
 
-    const char* broker_ip = "34.53.123.240";
-    FILE *fp;
     {
         char subInit[512];
         sprintf(subInit, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
-        fp = popen(subInit, "r");
-        if (fp && fgets(boardResponse, sizeof(boardResponse), fp)) {
+        FILE* initFp = popen(subInit, "r");
+        if (initFp && fgets(boardResponse, sizeof(boardResponse), initFp)) {
             boardResponse[strcspn(boardResponse, "\r\n")] = 0;
-            // parse
             char* t = strtok(boardResponse, ",");
             if (t) {
                 strncpy(boardCopy, t, 9);
@@ -82,7 +80,7 @@ void runMode1() {
             }
             memcpy(board, boardCopy, 9);
         }
-        if (fp) pclose(fp);
+        if (initFp) pclose(initFp);
     }
 
     drawBoard();
@@ -96,26 +94,24 @@ void runMode1() {
         scanf("%d", &userMove);
         getchar();
 
-        {
-            char pubCmd[256];
-            sprintf(pubCmd, "mqtt_send.bat %d", userMove);
-            system(pubCmd);
-        }
+        char pubCmd[256];
+        sprintf(pubCmd, "mqtt_send.bat %d", userMove);
+        system(pubCmd);
+        Sleep(300);
 
         {
-            char sub1[512];
-            sprintf(sub1, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
-            fp = popen(sub1, "r");
+            char subCmd1[512];
+            sprintf(subCmd1, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
+            FILE* fp1 = popen(subCmd1, "r");
+            if (!fp1 || fgets(boardResponse, sizeof(boardResponse), fp1) == NULL) {
+                perror("read failed");
+                if (fp1) pclose(fp1);
+                return;
+            }
+            pclose(fp1);
         }
-        if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
-            perror("read failed");
-            if (fp) pclose(fp);
-            return;
-        }
-        pclose(fp);
 
         boardResponse[strcspn(boardResponse, "\r\n")] = 0;
-
         {
             char* t = strtok(boardResponse, ",");
             if (t) {
@@ -133,31 +129,35 @@ void runMode1() {
         if (result == 'T') { printf("It's a draw!\n"); break; }
 
         printf("Opponent's turn...\n");
+
         {
             char repub[512];
             sprintf(repub, "mosquitto_pub -h %s -t game/board -m \"%.9s,%c\"", broker_ip, board, result);
             system(repub);
+        }
+
+        {
             char sshCmd[512];
             sprintf(sshCmd,
                 "ssh -i C:/Users/Andre/.ssh/id_ed25519 andrewpalacios2004@%s '/home/andrewpalacios2004/Project3/player2.sh'",
                 broker_ip);
             system(sshCmd);
+            Sleep(300);
         }
 
         {
-            char sub2[512];
-            sprintf(sub2, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
-            fp = popen(sub2, "r");
+            char subCmd2[512];
+            sprintf(subCmd2, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
+            FILE* fp2 = popen(subCmd2, "r");
+            if (!fp2 || fgets(boardResponse, sizeof(boardResponse), fp2) == NULL) {
+                perror("read bot failed");
+                if (fp2) pclose(fp2);
+                return;
+            }
+            pclose(fp2);
         }
-        if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
-            perror("read bot failed");
-            if (fp) pclose(fp);
-            return;
-        }
-        pclose(fp);
 
         boardResponse[strcspn(boardResponse, "\r\n")] = 0;
-
         {
             char* t = strtok(boardResponse, ",");
             if (t) {
@@ -177,15 +177,17 @@ void runMode1() {
 
     Sleep(2000);
     printf("Game over. Press Enter to return to menu...");
-    while (getchar()!='\n');
+    while (getchar() != '\n');
 }
+
 
 void runMode2() {
     int move;
     char result = ' ';
     char boardResponse[64];
     char boardCopy[10];
-    const char* broker_ip = "34.53.123.240";
+    char lastBoard[10] = "123456789";
+    const char* broker_ip = "35.203.183.220";
     const char* mqtt_path = "C:\\mosq\\mosquitto_pub.exe";
 
     int currentPlayer = 0;
@@ -204,6 +206,7 @@ void runMode2() {
             result = (token && strlen(token) > 0) ? toupper(token[0]) : ' ';
         }
         memcpy(board, boardCopy, 9);
+        strcpy(lastBoard, boardCopy);
     }
     if (fp) pclose(fp);
 
@@ -233,27 +236,31 @@ void runMode2() {
         char pubCmd[256];
         sprintf(pubCmd, "mosquitto_pub -h %s -t game/move/%s -m \"%d\"", broker_ip, topics[currentPlayer], move);
         system(pubCmd);
+        Sleep(300);
 
-        char subCmd[512];
-        sprintf(subCmd, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
-        fp = popen(subCmd, "r");
-        if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
-            perror("Failed to receive board from ESP32");
-            if (fp) pclose(fp);
-            return;
-        }
-        pclose(fp);
+        do {
+            char subCmd[512];
+            sprintf(subCmd, "mosquitto_sub -h %s -t game/board -C 1", broker_ip);
+            fp = popen(subCmd, "r");
+            if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
+                perror("Failed to receive board from ESP32");
+                if (fp) pclose(fp);
+                return;
+            }
+            pclose(fp);
 
-        boardResponse[strcspn(boardResponse, "\r\n")] = 0;
-        char* token = strtok(boardResponse, ",");
-        if (token) {
-            strncpy(boardCopy, token, 9);
-            boardCopy[9] = '\0';
-            token = strtok(NULL, ",");
-            result = (token && strlen(token) > 0) ? toupper(token[0]) : ' ';
-        }
+            boardResponse[strcspn(boardResponse, "\r\n")] = 0;
+            char* token = strtok(boardResponse, ",");
+            if (token) {
+                strncpy(boardCopy, token, 9);
+                boardCopy[9] = '\0';
+                token = strtok(NULL, ",");
+                result = (token && strlen(token) > 0) ? toupper(token[0]) : ' ';
+            }
+        } while (strcmp(boardCopy, lastBoard) == 0);
 
         memcpy(board, boardCopy, 9);
+        strcpy(lastBoard, boardCopy);
         drawBoard();
 
         if (result == 'X') {
@@ -276,11 +283,12 @@ void runMode2() {
 }
 
 
+
 void runMode3() {
     char boardResponse[64];
     char boardCopy[10];
     char result = ' ';
-    const char* broker_ip = "34.53.123.240";
+    const char* broker_ip = "35.203.183.220";
     const char* mqtt_path = "C:\\mosq\\mosquitto_pub.exe";
 
     char resetCmd[256];
@@ -295,7 +303,7 @@ void runMode3() {
 
         int attempts = 0;
         do {
-            FILE *fp = popen("mosquitto_sub -h 34.53.123.240 -t game/board -C 1", "r");
+            FILE *fp = popen("mosquitto_sub -h 35.203.183.220 -t game/board -C 1", "r");
             if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
                 perror("Failed to read board");
                 if (fp) pclose(fp);
@@ -359,7 +367,7 @@ void runMode3() {
 
         int moveAttempts = 0;
         do {
-            FILE *fp = popen("mosquitto_sub -h 34.53.123.240 -t game/board -C 1", "r");
+            FILE *fp = popen("mosquitto_sub -h 35.203.183.220 -t game/board -C 1", "r");
             if (!fp || fgets(boardResponse, sizeof(boardResponse), fp) == NULL) {
                 perror("Failed to read post-move board");
                 if (fp) pclose(fp);
