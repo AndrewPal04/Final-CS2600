@@ -4,7 +4,7 @@
 #include <time.h>
 #include <windows.h>
 
-#define BROKER_IP "34.53.123.240"
+#define BROKER_IP "35.203.183.220"
 #define MQTT_PATH "C:\\mosq\\mosquitto_pub.exe"
 
 int main() {
